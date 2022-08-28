@@ -1,0 +1,425 @@
+---
+title: "Summer Internship"
+author: "Navin Ramanan"
+date: "6/01/2022"
+output: html_document
+---
+
+##Setup
+```{r Packages + setup, include=FALSE, results='hide'}
+#Source your main
+source('APP_Age.R') # load all our wonderful functions
+knitr::opts_chunk$set(echo = FALSE) # no markdown for you <3
+
+```
+
+1.  Map Ensembl ID  to Gene Symbol in the counts file
+
+```{r Part1}
+#Read in verse_counts.tsv and display the head of the resulting tibble
+Hippocampus_counts_filename2 <- '../data/Hippocampus_counts_matrix2.csv'
+Cortex_counts_filename2 <- '../data/Cortex_counts_matrix2.csv'
+
+Hippocampus_counts2 <- read.csv(Hippocampus_counts_filename2,as.is=TRUE, check.names=FALSE)
+Cortex_counts2 <- read.csv(Cortex_counts_filename2,as.is=TRUE, check.names=FALSE)
+
+Hippocampus_gene_name2 <- ensembl_id_to_gene_symbol(Hippocampus_counts2$Geneid)
+Cortex_gene_name2 <- ensembl_id_to_gene_symbol(Cortex_counts2$Geneid)
+
+```
+
+2.  Write Counts Data with Gene Symbol to CSV
+
+```{r Part2}
+
+Hippocampus_geneids <- Hippocampus_gene_name2
+Cortex_geneids <- Cortex_gene_name2
+names(Hippocampus_geneids)[names(Hippocampus_geneids) == "ensembl_gene_id"] <- "Geneid"
+names(Cortex_geneids)[names(Cortex_geneids) == "ensembl_gene_id"] <- "Geneid"
+
+#remove duplicate rows across specific columns of data frame
+Hippocampus_Geneid <- Hippocampus_geneids %>% distinct(Geneid, .keep_all = TRUE)
+Cortex_Geneid <- Cortex_geneids %>% distinct(Geneid, .keep_all = TRUE)
+
+new_Hippocampus_counts <- merge(Hippocampus_geneids, Hippocampus_counts2, by='Geneid')
+new_Cortex_counts <- merge(Cortex_geneids, Cortex_counts2, by='Geneid')
+
+# write counts table with mice gene name to a csv file
+write.csv(new_Hippocampus_counts,'Hippocampus_counts_with_gene_names.csv')
+write.csv(new_Cortex_counts,'Cortex_counts_with_gene_names.csv')
+
+```
+
+3.  Reading and filtering Hippocampus count and metadata files
+
+```{r Part3}
+#Read in verse_counts.tsv and display the head of the resulting tibble
+Hippocampus_counts_filename <- '../data/Hippocampus_counts_matrix.csv'
+Hippocampus_metadata_filename <- '../data/Hippocampus_metadata.csv'
+
+# metadata
+Hippocampus_metadata <- read.csv(Hippocampus_metadata_filename,as.is=TRUE)
+# Make the first col of metadata into rownames
+Hippocampus_meta_subset <- subset(Hippocampus_metadata, select= -c(1))
+rownames(Hippocampus_meta_subset) <- Hippocampus_metadata[,1]
+
+# Count data
+Hippocampus_counts <- read.csv(Hippocampus_counts_filename,as.is=TRUE, check.names=FALSE)
+# Keep only Counts cols and make Geneid col into rownames
+Hippocampus_counts_subset <- subset(Hippocampus_counts, select= -c(1,2,3,4,5,6))
+rownames(Hippocampus_counts_subset) <- Hippocampus_counts[,1]
+
+# Keep rows with sum of sample counts greater than 10
+Hippocampus_counts_subset_df <- Hippocampus_counts_subset[(rowSums(Hippocampus_counts_subset) > 10),]
+
+```
+
+4.  Reading and filtering Cortex count and metadata files
+
+```{r Part4}
+#Read in verse_counts.tsv and display the head of the resulting tibble
+Cortex_counts_filename <- '../data/Cortex_counts_matrix.csv'
+Cortex_metadata_filename <- '../data/Cortex_metadata.csv'
+
+# metadata
+Cortex_metadata <- read.csv(Cortex_metadata_filename,as.is=TRUE)
+# Make the first col of metadata into rownames
+Cortex_meta_subset <- subset(Cortex_metadata, select= -c(1))
+rownames(Cortex_meta_subset) <- Cortex_metadata[,1]
+
+# Count data
+Cortex_counts <- read.csv(Cortex_counts_filename,as.is=TRUE, check.names=FALSE)
+# Keep only Counts cols and make Geneid col into rownames
+Cortex_counts_subset <- subset(Cortex_counts, select= -c(1,2,3,4,5,6))
+rownames(Cortex_counts_subset) <- Cortex_counts[,1]
+
+# Keep rows with sum of sample counts greater than 10
+Cortex_counts_subset_df <- Cortex_counts_subset[(rowSums(Cortex_counts_subset) > 10),]
+
+```
+
+5.  Cortex: APP (APP vs WT) while controlling for covariate Age (~ Age + APP)
+   
+```{r Part5}
+
+message("Cortex: Running DESeq2 for APP (APP vs WT) while controlling for covariate Age (~ Age + APP):padj < 0.05 and 0.10 ")
+condition = "WT"
+Cortex_deseq_results <- run_deseq_APP_Age(Cortex_counts_subset_df, Cortex_meta_subset, 10, condition)
+Cortex_results <- Cortex_deseq_results$res
+Cortex_dds <- Cortex_deseq_results$dds
+head(Cortex_results, 10)
+Cortex_results
+Cortex_dds
+# write out DE results
+write.csv(Cortex_results,'Cortex_deseq_results_APP_Age.csv')
+message("Cortex DESeq2 result is saved in file: 'Cortex_deseq_results_APP_Age.csv' ")
+
+# write out matrix of normalized counts
+write.csv(counts(Cortex_dds,normalized=TRUE),'Cortex_deseq_norm_counts_APP_Age.csv')
+message("Cortex DESeq2 normalized counts is saved in file: 'Cortex_deseq_norm_counts_APP_Age.csv' ")
+
+#Add gene name to deseq results file and save the file
+Cortex_deseq_res <- as.data.frame(Cortex_deseq_results$res)
+Cortex_deseq_res_with_genename <- tibble::rownames_to_column(Cortex_deseq_res, "Geneid")
+Cortex_deseq_res_with_genename$mgi_symbol <- new_Cortex_counts$mgi_symbol[match(Cortex_deseq_res_with_genename$Geneid, new_Cortex_counts$Geneid)]
+Cortex_deseq_res_with_genename <- Cortex_deseq_res_with_genename %>% relocate(mgi_symbol, .after=Geneid)
+write.csv(Cortex_deseq_res_with_genename, 'Cortex_deseq_results_with_genename_APP_Age.csv')
+message("Cortex DESeq2 result with Gene names (mgi_symbols) is saved in file: 'Cortex_deseq_results_with_genename_APP_Age.csv' ")
+
+
+############################## padj_threshold = 0.05 ##############################
+# filter rows with padj < padj_threshold
+padj_threshold <- 0.05
+print(nrow(Cortex_deseq_res))
+Cortex_deseq_results_padj_filtered <- filter(Cortex_deseq_res, padj < padj_threshold)
+print(nrow(Cortex_deseq_results_padj_filtered))
+write.csv(Cortex_deseq_results_padj_filtered, 'Cortex_deseq_results_APP_Age_padj_05_filtered.csv')
+message("Cortex DESeq2 result after padj (0.05) filtering is saved in file: 'Cortex_deseq_results_APP_Age_padj_05_filtered.csv' ")
+
+# Number of genes significant at padj less than 0.05
+message(paste0("Number of DE genes significant at padj < 0.05 for Cortex:APP (APP vs WT) while controlling Age: ", nrow(Cortex_deseq_results_padj_filtered)))
+
+# Number of DE Genes discarded
+no_of_genes_discarded <- nrow(Cortex_deseq_res) - nrow(Cortex_deseq_results_padj_filtered)
+message(paste0("Number of DE genes discarded after padj threshold 0.05 filtering for Cortex:APP(APP vs WT) while controlling Age: ", no_of_genes_discarded))
+  
+#Histograms of fold change values from the significant DE genes. 
+Cortex_deseq_hist_title1 <- "Histogram of log2FoldChange:Cortex:APP (APP vs WT): Age Controlled:padj < 0.05"
+Cortex_deseq_fc_hist_plot1 <- deseq_FC_hist_plot(Cortex_deseq_results_padj_filtered, Cortex_deseq_hist_title1)
+Cortex_deseq_fc_hist_plot1
+
+#Scatter plots of fold change vs nominal p-value.
+Cortex_deseq_scat_title1 <- "Scatter Plot:Cortex:APP (APP vs WT) - Age Controlled:padj < 0.05"
+Cortex_deseq_scat_plot1 <- deseq_DE_scat_plot(Cortex_deseq_results_padj_filtered, Cortex_deseq_scat_title1)
+Cortex_deseq_scat_plot1
+
+#Add gene name to deseq results file and save the file
+Cortex_deseq_padj_filtered_05 <- Cortex_deseq_results_padj_filtered
+Cortex_deseq_padj_filtered_05 <- tibble::rownames_to_column(Cortex_deseq_padj_filtered_05, "Geneid")
+Cortex_deseq_padj_filtered_05$mgi_symbol <- 
+new_Cortex_counts$mgi_symbol[match(Cortex_deseq_padj_filtered_05$Geneid, new_Cortex_counts$Geneid)]
+write.csv(Cortex_deseq_padj_filtered_05, 'Cortex_deseq_results_APP_Age_padj_05_filtered_genename.csv')
+
+############################## padj_threshold = 0.10 ##############################
+# filter rows with padj < padj_threshold
+padj_threshold <- 0.10
+print(nrow(Cortex_deseq_res))
+Cortex_deseq_results_padj_filtered <- filter(Cortex_deseq_res, padj < padj_threshold)
+print(nrow(Cortex_deseq_results_padj_filtered))
+write.csv(Cortex_deseq_results_padj_filtered, 'Cortex_deseq_results_APP_Age_padj_1_filtered.csv')
+message("Cortex DESeq2 result after padj (0.1) filtering is saved in file: 'Cortex_deseq_results_APP_Age_padj_1_filtered.csv' ")
+
+# Number of genes significant at padj less than 0.1
+message(paste0("Number of DE genes significant at padj < 0.1 for Cortex:APP (APP vs WT)  while controlling Age: ", nrow(Cortex_deseq_results_padj_filtered)))
+
+# Number of DE Genes discarded
+no_of_genes_discarded <- nrow(Cortex_deseq_res) - nrow(Cortex_deseq_results_padj_filtered)
+message(paste0("Number of DE genes discarded after padj threshold 0.1 filtering for Cortex:APP(APP vs WT)  while controlling Age: ", no_of_genes_discarded))
+  
+#Histograms of fold change values from the significant DE genes. 
+Cortex_deseq_hist_title1 <- "Histogram of log2FoldChange:Cortex:APP (APP vs WT) - Age Controlled:padj < 0.1"
+Cortex_deseq_fc_hist_plot1 <- deseq_FC_hist_plot(Cortex_deseq_results_padj_filtered, Cortex_deseq_hist_title1)
+Cortex_deseq_fc_hist_plot1
+
+#Scatter plots of fold change vs nominal p-value.
+Cortex_deseq_scat_title1 <- "Scatter Plot:Cortex:APP (APP vs WT) - Age Controlled:padj < 0.1"
+Cortex_deseq_scat_plot1 <- deseq_DE_scat_plot(Cortex_deseq_results_padj_filtered, Cortex_deseq_scat_title1)
+Cortex_deseq_scat_plot1
+
+#Add gene name to deseq results file and save the file
+Cortex_deseq_padj_filtered_1 <- Cortex_deseq_results_padj_filtered
+Cortex_deseq_padj_filtered_1 <- tibble::rownames_to_column(Cortex_deseq_padj_filtered_1, "Geneid")
+Cortex_deseq_padj_filtered_1$mgi_symbol <- new_Cortex_counts$mgi_symbol[match(Cortex_deseq_padj_filtered_1$Geneid, new_Cortex_counts$Geneid)]
+write.csv(Cortex_deseq_padj_filtered_1, 'Cortex_deseq_results_APP_Age_padj_1_filtered_genename.csv')
+
+```
+
+6. Cortex: Enhanced Volcano Plot
+
+```{r Part6}
+# generate Enhanced Volcano Plot
+padj_threshold <- 0.05
+FC_threshold <- 0
+subtitle <- "DESeq2 Results:Cortex:APP (APP vs WT) - Age Controlled"
+Cortex_EnhancedVolcano_plot <- plot_enhanced_volcano(Cortex_deseq_res_with_genename, padj_threshold,  FC_threshold, subtitle)
+Cortex_EnhancedVolcano_plot
+
+```
+
+7. Cortex: Heatmap
+
+```{r Part 7}
+ # generate heatmap
+ Cortex_title <- "Heatmap:Cortex:APP (APP vs WT) - Age Controlled"
+ Cortex_results_with_genename <- Cortex_deseq_res_with_genename[, -c(1)]
+ rownames(Cortex_results_with_genename) <- Cortex_deseq_res_with_genename$Geneid
+ plot_heatmap <-  generate_heatmap(Cortex_dds, Cortex_results_with_genename, Cortex_title)
+ plot_heatmap
+
+```
+
+8 Cortex: PCA
+
+```{r Part 8}
+
+ # PCA
+ message("************** Principal Component Analysis (PCA) **************")
+ Cortex_ntd <- normTransform(Cortex_dds)
+ Cortex_ntd
+ #view(assay(Cortex_ntd))
+ Cortex_pca_results <- prcomp(scale(t(assay(Cortex_ntd))), center=FALSE, scale=FALSE)
+ summary(Cortex_pca_results)
+ Cortex_pc_variance_explained <- calculate_variance_explained(Cortex_pca_results)
+ Cortex_pc_variance_explained
+ Cortex_variance_tibble <- make_variance_tibble(Cortex_pc_variance_explained, Cortex_pca_results)
+ head(Cortex_variance_tibble, 5)
+ plot_pca_variance(Cortex_variance_tibble)
+ Cortex_biplot_title = "PCA Plot: PC1 vs PC2:Cortex:APP (APP vs WT) - Age Controlled"
+ make_biplot(Cortex_metadata_filename, Cortex_pca_results, Cortex_biplot_title)
+ 
+```
+
+9.  Hippocampus: APP (APP vs WT) while controlling for covariate Age (~ Age + APP)
+
+```{r Part7}
+message("Hippocampus: Running DESeq2 for APP (APP vs WT) while controlling for covariate Age (~ Age + APP):padj < 0.05 and 0.10 ")
+condition = "WT"
+Hippocampus_deseq_results <- run_deseq_APP_Age(Hippocampus_counts_subset_df, Hippocampus_meta_subset, 10, condition)
+Hippocampus_results <- Hippocampus_deseq_results$res
+Hippocampus_dds <- Hippocampus_deseq_results$dds
+head(Hippocampus_results, 10)
+Hippocampus_results
+Hippocampus_dds
+# write out DE results
+write.csv(Hippocampus_results,'Hippocampus_deseq_results_APP_Age.csv')
+message("Hippocampus DESeq2 result is saved in file: 'Hippocampus_deseq_results_APP_Age.csv' ")
+
+# write out matrix of normalized counts
+write.csv(counts(Hippocampus_dds,normalized=TRUE),'Hippocampus_deseq_norm_counts_APP_Age.csv')
+message("Hippocampus DESeq2 normalized counts is saved in file: 'Hippocampus_deseq_norm_counts_APP_Age.csv' ")
+
+#Add gene name to deseq results file and save the file
+Hippocampus_deseq_res <- as.data.frame(Hippocampus_deseq_results$res)
+Hippocampus_deseq_res_with_genename <- tibble::rownames_to_column(Hippocampus_deseq_res, "Geneid")
+Hippocampus_deseq_res_with_genename$mgi_symbol <- new_Hippocampus_counts$mgi_symbol[match(Hippocampus_deseq_res_with_genename$Geneid, new_Hippocampus_counts$Geneid)]
+Hippocampus_deseq_res_with_genename <- Hippocampus_deseq_res_with_genename %>% relocate(mgi_symbol, .after=Geneid)
+write.csv(Hippocampus_deseq_res_with_genename, 'Hippocampus_deseq_results_with_genename_APP_Age.csv')
+message("Hippocampus DESeq2 result with Gene names (mgi_symbols) is saved in file: 'Hippocampus_deseq_results_with_genename_APP_Age.csv' ")
+
+############################## padj_threshold = 0.05 ##############################
+# filter rows with padj < padj_threshold
+padj_threshold <- 0.05
+Hippocampus_deseq_results_padj_filtered <- filter(Hippocampus_deseq_res, padj < padj_threshold)
+write.csv(Hippocampus_deseq_results_padj_filtered, 'Hippocampus_deseq_results_APP_Age_padj_05_filtered.csv')
+message("Hippocampus DESeq2 result after padj (0.05) filtering is saved in file: 'Hippocampus_deseq_results_APP_Age_padj_05_filtered.csv' ")
+
+# Number of genes significant at padj less than 0.05
+message(paste0("Number of DE genes significant at padj < 0.05 for Hippocampus:APP (APP vs WT) while controlling Age: ", nrow(Hippocampus_deseq_results_padj_filtered)))
+
+# Number of DE Genes discarded
+no_of_genes_discarded <- nrow(Hippocampus_deseq_res) - nrow(Hippocampus_deseq_results_padj_filtered)
+message(paste0("Number of DE genes discarded after padj threshold < 0.05 filtering for Hippocampus:APP (APP vs WT) while controlling Age: ", no_of_genes_discarded))
+
+Hippocampus_deseq_hist_title1 <- "Histogram of log2FoldChange:Hippocampus:APP (APP vs WT) - Age Controlled:padj < 0.05"
+Hippocampus_deseq_fc_hist_plot1 <- deseq_FC_hist_plot(Hippocampus_deseq_results_padj_filtered, Hippocampus_deseq_hist_title1)
+Hippocampus_deseq_fc_hist_plot1
+
+#scatter plot
+Hippocampus_deseq_scat_title1 <- "Scatter Plot:Hippocampus:APP (APP vs WT) - Age Controlled:padj < 0.05"
+Hippocampus_deseq_scat_plot1 <- deseq_DE_scat_plot(Hippocampus_deseq_results_padj_filtered, Hippocampus_deseq_scat_title1)
+Hippocampus_deseq_scat_plot1
+
+#Add gene name to deseq results file and save the file
+Hippocampus_deseq_padj_filtered_05 <- Hippocampus_deseq_results_padj_filtered
+Hippocampus_deseq_padj_filtered_05 <- tibble::rownames_to_column(Hippocampus_deseq_padj_filtered_05, "Geneid")
+Hippocampus_deseq_padj_filtered_05$mgi_symbol <- new_Hippocampus_counts$mgi_symbol[match(Hippocampus_deseq_padj_filtered_05$Geneid, new_Hippocampus_counts$Geneid)]
+write.csv(Hippocampus_deseq_padj_filtered_05, 'Hippocampus_deseq_results_APP_Age_padj_05_filtered_genename.csv')
+
+############################## padj_threshold = 0.10 ##############################
+# filter rows with padj < padj_threshold
+padj_threshold <- 0.10
+Hippocampus_deseq_results_padj_filtered <- filter(Hippocampus_deseq_res, padj < padj_threshold)
+write.csv(Hippocampus_deseq_results_padj_filtered, 'Hippocampus_deseq_results_APP_Age_padj_1_filtered.csv')
+message("Hippocampus DESeq2 result after padj (0.1) filtering is saved in file: 'Hippocampus_deseq_results_APP_Age_padj_1_filtered.csv' ")
+
+# Number of genes significant at padj less than 0.1
+message(paste0("Number of DE genes significant at padj < 0.1 for Hippocampus:APP (APP vs WT) while controlling Age: ", nrow(Hippocampus_deseq_results_padj_filtered)))
+
+# Number of DE Genes discarded
+no_of_genes_discarded <- nrow(Hippocampus_deseq_res) - nrow(Hippocampus_deseq_results_padj_filtered)
+message(paste0("Number of DE genes discarded after padj threshold < 0.1 filtering for Hippocampus:APP (APP vs WT) while controlling Age: ", no_of_genes_discarded))
+
+Hippocampus_deseq_hist_title1 <- "Histogram of log2FoldChange:Cortex:APP (APP vs WT) - Age Controlled:padj < 0.1"
+Hippocampus_deseq_fc_hist_plot1 <- deseq_FC_hist_plot(Hippocampus_deseq_results_padj_filtered, Hippocampus_deseq_hist_title1)
+Hippocampus_deseq_fc_hist_plot1
+
+#scatter plot
+Hippocampus_deseq_scat_title1 <- "Scatter Plot:Hippocampus:APP (APP vs WT) - Age Controlled:padj < 0.1"
+Hippocampus_deseq_scat_plot1 <- deseq_DE_scat_plot(Hippocampus_deseq_results_padj_filtered, Hippocampus_deseq_scat_title1)
+Hippocampus_deseq_scat_plot1
+
+#Add gene name to deseq results file and save the file
+Hippocampus_deseq_padj_filtered_1 <- Hippocampus_deseq_results_padj_filtered
+Hippocampus_deseq_padj_filtered_1 <- tibble::rownames_to_column(Hippocampus_deseq_padj_filtered_1, "Geneid")
+Hippocampus_deseq_padj_filtered_1$mgi_symbol <- new_Hippocampus_counts$mgi_symbol[match(Hippocampus_deseq_padj_filtered_1$Geneid, new_Hippocampus_counts$Geneid)]
+write.csv(Hippocampus_deseq_padj_filtered_1, 'Hippocampus_deseq_results_APP_Age_padj_1_filtered_genename.csv')
+
+```
+
+10. Hippocampus: Enhanced Volcano Plot
+
+```{r Part10}
+# generate Enhanced Volcano Plot
+padj_threshold <- 0.05
+FC_threshold <- 0
+subtitle <- "DESeq2 Results:Hippocampus:APP (APP vs WT) - Age Controlled"
+Hippocampus_EnhancedVolcano_plot <- plot_enhanced_volcano(Hippocampus_deseq_res_with_genename, padj_threshold,  FC_threshold, subtitle)
+Hippocampus_EnhancedVolcano_plot
+
+```
+
+11. Hippocampus: Heatmap
+
+```{r Part11}
+ # generate heatmap
+ Hippocampus_title <- "Heatmap:Hippocampus:APP (APP vs WT) - Age Controlled"
+ Hippocampus_results_with_genename <- Hippocampus_deseq_res_with_genename[, -c(1)]
+ rownames(Hippocampus_results_with_genename) <- Hippocampus_deseq_res_with_genename$Geneid
+ plot_heatmap <-  generate_heatmap(Hippocampus_dds, Hippocampus_results_with_genename, Hippocampus_title)
+ plot_heatmap
+
+```
+
+12 Hippocampus: PCA
+
+```{r Part12}
+
+ # PCA
+ message("************** Principal Component Analysis (PCA) **************")
+ Hippocampus_ntd <- normTransform(Hippocampus_dds)
+ Hippocampus_ntd
+ #view(assay(Cortex_ntd))
+ Hippocampus_pca_results <- prcomp(scale(t(assay(Hippocampus_ntd))), center=FALSE, scale=FALSE)
+ summary(Hippocampus_pca_results)
+ Hippocampus_pc_variance_explained <- calculate_variance_explained(Hippocampus_pca_results)
+ Hippocampus_pc_variance_explained
+ Hippocampus_variance_tibble <- make_variance_tibble(Hippocampus_pc_variance_explained, Hippocampus_pca_results)
+ head(Hippocampus_variance_tibble, 5)
+ plot_pca_variance(Hippocampus_variance_tibble)
+ Hippocampus_biplot_title = "PCA Plot: PC1 vs PC2:Hippocampus:APP (APP vs WT) - Age Controlled"
+ make_biplot(Hippocampus_metadata_filename, Hippocampus_pca_results, Hippocampus_biplot_title)
+ 
+``` 
+
+13. GSEA:Running fgsea
+
+Perform a GSEA using a ranked list log2FoldChange values for all genes discovered in the 
+DESeq2 results against the M2 Canonical Pathways gene set collection. Convert gene identifiers in the results to the appropriate matching format found in the M2 gene sets. fgsea expects a named vector of gene level statistics and the gene sets in the form of a named list.
+
+Using "m2.cp.wikipathways.v0.3.symbols.gmt" which is the Canonical Pathways gene sets 
+derived from the WikiPathways pathway database (WikiPathways subset of CP)
+
+
+```{r Part13}
+#Label the results with the column as specified above
+padj_threshold <- 0.05
+FC_threshold <- 0
+Cortex_labeled_results <- label_res(Cortex_results, padj_threshold, FC_threshold)
+Cortex_labeled_results <- Cortex_labeled_results[order(Cortex_labeled_results$padj, decreasing = FALSE), ]
+Cortex_labeled_results %>% relocate(genes, volc_plot_status, log2FoldChange, padj)
+#Run fgsea using a ranked list of descending log2FC against the wiki pathways gene set
+Cortex_fgsea_results <- run_gsea(Cortex_labeled_results, '../data/m2.cp.wikipathways.v0.3.symbols.gmt')
+Cortex_filtered_results <- Cortex_fgsea_results[order(Cortex_fgsea_results$NES, decreasing = FALSE), ]
+Cortex_filtered_results
+Cortex_fgsea_results_mat <- as.matrix(Cortex_filtered_results)
+write.csv(Cortex_fgsea_results_mat, 'Cortex_NES_ordered_fgsea_results_APP_Age_FC0.csv')
+message("Cortex NES ordered fgsea results saved in file: 'Cortex_NES_ordered_fgsea_results_APP_Age_FC0.csv' ")
+
+#Plot the top ten pathways with both positive and negative NES (20 total)
+#Color the pathways by the sign of their NES (positive or negative)
+Cortex_fgsea_title = "Cortex:APP (APP vs WT) - Age Controlled"
+Cortex_fgsea_plot <- top_pathways(Cortex_filtered_results, 10, Cortex_fgsea_title)
+Cortex_fgsea_plot
+
+#################################################################
+# Hippocampus FGSEA 
+FC_threshold <- 0
+Hippocampus_labeled_results <- label_res(Hippocampus_results, padj_threshold, FC_threshold)
+Hippocampus_labeled_results <- Hippocampus_labeled_results[order(Hippocampus_labeled_results$padj, decreasing = FALSE), ]
+Hippocampus_labeled_results %>% relocate(genes, volc_plot_status, log2FoldChange, padj)
+Hippocampus_fgsea_results <- run_gsea(Hippocampus_labeled_results, '../data/m2.cp.wikipathways.v0.3.symbols.gmt')
+Hippocampus_filtered_results <- Hippocampus_fgsea_results[order(Hippocampus_fgsea_results$NES, decreasing = FALSE), ]
+Hippocampus_filtered_results
+Hippocampus_fgsea_results_mat <- as.matrix(Hippocampus_filtered_results)
+write.csv(Hippocampus_fgsea_results_mat, 'Hippocampus_NES_ordered_fgsea_results_APP_Age_FC0.csv')
+message("Hippocampus NES ordered fgsea results saved in file: 'Hippocampus_NES_ordered_fgsea_results_APP_Age_FC0.csv' ")
+
+#Plot the top ten pathways with both positive and negative NES (20 total)
+#Color the pathways by the sign of their NES (positive or negative)
+#top_pathways(fgsea_results, 10)
+Hippocampus_fgsea_title = "Hippocampus:APP (APP vs WT) - Age Controlled"
+Hippocampus_fgsea_plot <- top_pathways(Hippocampus_filtered_results, 10, Hippocampus_fgsea_title)
+Hippocampus_fgsea_plot
+
+```
+
